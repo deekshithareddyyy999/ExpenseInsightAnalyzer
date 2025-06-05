@@ -54,19 +54,22 @@ def add_expense_to_db(username, date, category, amount, description):
 
 def get_expenses_from_db(username):
     cursor.execute(
-        "SELECT date, category, amount, description FROM expenses WHERE username=? ORDER BY date DESC",
+        "SELECT id, date, category, amount, description FROM expenses WHERE username=? ORDER BY date DESC",
         (username,)
     )
     rows = cursor.fetchall()
     if rows:
-        return pd.DataFrame(rows, columns=["Date", "Category", "Amount", "Description"])
+        return pd.DataFrame(rows, columns=["ID", "Date", "Category", "Amount", "Description"])
     else:
-        return pd.DataFrame(columns=["Date", "Category", "Amount", "Description"])
+        return pd.DataFrame(columns=["ID", "Date", "Category", "Amount", "Description"])
+
+def delete_expense(expense_id):
+    cursor.execute("DELETE FROM expenses WHERE id = ?", (expense_id,))
+    conn.commit()
 
 def load_expenses_from_csv(username, uploaded_file):
     try:
         df = pd.read_csv(uploaded_file)
-        # Insert all rows to DB for this user
         for _, row in df.iterrows():
             add_expense_to_db(
                 username,
@@ -90,7 +93,6 @@ def login():
             st.session_state.logged_in = True
             st.session_state.username = username
             st.success(f"Welcome back, {username}!")
-            # Replace st.experimental_rerun() with this:
             st.session_state['login_refresh'] = not st.session_state.get('login_refresh', False)
             st.stop()
         else:
@@ -113,7 +115,6 @@ def logout():
     if st.button("Logout"):
         st.session_state.logged_in = False
         st.session_state.username = ""
-        # Replace st.experimental_rerun() with this:
         st.session_state['login_refresh'] = not st.session_state.get('login_refresh', False)
         st.stop()
 
@@ -133,17 +134,35 @@ def expense_app():
     # Add New Expense
     st.sidebar.header("Add a New Expense")
     date = st.sidebar.date_input("Date")
-    category = st.sidebar.text_input("Category")
+
+    category_options = ["Food", "Travel", "Entertainment", "Utilities", "Other"]
+    category = st.sidebar.selectbox("Category", category_options)
+
     amount = st.sidebar.number_input("Amount", min_value=0.0, format="%.2f")
     description = st.sidebar.text_input("Description")
+
     if st.sidebar.button("Add Expense"):
         add_expense_to_db(st.session_state.username, date.strftime("%Y-%m-%d"), category, amount, description)
         st.success("Expense added!")
 
-    # Show Expenses
+    # Show Expenses with Delete Option
     st.header("Your Expenses")
     expenses_df = get_expenses_from_db(st.session_state.username)
-    st.dataframe(expenses_df)
+
+    if expenses_df.empty:
+        st.info("No expenses found.")
+    else:
+        for index, row in expenses_df.iterrows():
+            col1, col2, col3, col4, col5, col6 = st.columns([1.2, 1.2, 1, 1.5, 2, 1])
+            col1.write(row["Date"])
+            col2.write(row["Category"])
+            col3.write(f"₹{row['Amount']:.2f}")
+            col4.write(row["Description"])
+            col5.write("")  # spacer
+            if col6.button("🗑️ Delete", key=f"del_{row['ID']}"):
+                delete_expense(row["ID"])
+                st.success(f"Deleted expense from {row['Date']} ({row['Category']})")
+                st.rerun()
 
     # Budget warning
     if budget > 0 and not expenses_df.empty:
@@ -154,7 +173,8 @@ def expense_app():
     # Save expenses to CSV
     if st.button("Save Expenses to CSV"):
         try:
-            expenses_df.to_csv(f"{st.session_state.username}_expenses.csv", index=False)
+            df_for_save = expenses_df.drop(columns=["ID"])  # Don't save DB IDs
+            df_for_save.to_csv(f"{st.session_state.username}_expenses.csv", index=False)
             st.success(f"Expenses saved to {st.session_state.username}_expenses.csv!")
         except Exception as e:
             st.error(f"Error saving CSV: {e}")
